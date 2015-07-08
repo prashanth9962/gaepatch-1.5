@@ -46,10 +46,7 @@ class IncludeFileNotFound(Exception):
 def Parse(appinfo_file, open_fn=open):
   """Parse an AppYaml file and merge referenced includes and builtins."""
   try:
-    appinfo_path = appinfo_file.name
-    if not os.path.isfile(appinfo_path):
-      raise Exception('Name defined by appinfo_file does not appear to be a '
-                      'valid file: %s' % appinfo_path)
+    appinfo_path = 'app.yaml'
   except AttributeError:
     raise Exception('File object passed to ParseAndMerge does not define '
                     'attribute "name" as as full file path.')
