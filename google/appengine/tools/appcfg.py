@@ -67,6 +67,9 @@ from google.appengine.api import yaml_errors
 from google.appengine.api import yaml_object
 from google.appengine.datastore import datastore_index
 from google.appengine.tools import appengine_rpc
+#orangescape flow error class importing
+from flow.exception.error import Rollbackerror , Googlesdkerror
+import appconfig
 try:
 
 
@@ -1559,15 +1562,7 @@ def _HashFromFileHandle(file_handle):
     The string representation of the hash.
   """
 
-
-
-
-
-
-
-  pos = file_handle.tell()
-  content_hash = _Hash(file_handle.read())
-  file_handle.seek(pos, 0)
+  content_hash = _Hash(file_handle)
   return content_hash
 
 
@@ -1783,22 +1778,21 @@ class AppVersionUpload(object):
     logging.info('Send: %s, params=%s', url, self.params)
     return self.rpcserver.Send(url, payload=payload, **self.params)
 
-  def AddFile(self, path, file_handle):
+  def AddFile(self, path, content):
     """Adds the provided file to the list to be pushed to the server.
 
     Args:
       path: The path the file should be uploaded as.
       file_handle: A stream containing data to upload.
     """
-    assert not self.in_transaction, 'Already in a transaction.'
-    assert file_handle is not None
+    #assert not self.in_transaction, 'Already in a transaction.'
+    #assert file_handle is not None
+    #reason = appinfo.ValidFilename(path)
+    #if reason:
+    #  logging.error(reason)
+    #  return
 
-    reason = appinfo.ValidFilename(path)
-    if reason:
-      logging.error(reason)
-      return
-
-    content_hash = _HashFromFileHandle(file_handle)
+    content_hash = _HashFromFileHandle(content)
 
     self.files[path] = content_hash
     self.all_files.add(path)
@@ -1904,7 +1898,7 @@ class AppVersionUpload(object):
     del self.files[path]
 
     file_classification = FileClassification(self.config, path)
-    payload = file_handle.read()
+    payload = file_handle
     if file_classification.IsStaticFile():
       self.blob_batcher.AddToBatch(path, payload,
                                    file_classification.StaticMimeType())
@@ -2127,11 +2121,12 @@ class AppVersionUpload(object):
 
       StatusUpdate('Scanning files on local disk.')
       num_files = 0
-      for path in paths:
-        file_handle = openfunc(path)
-        file_classification = FileClassification(self.config, path)
+      for file in files:
+       # file_handle = openfunc(path)
+        file_classification = FileClassification(self.config, file)
+#        print file+"  "+str(file_classification.IsApplicationFile())
         try:
-          file_length = GetFileLength(file_handle)
+          file_length = GetFileLength(files[file])
 
 
           if max_size_override:
@@ -2145,10 +2140,11 @@ class AppVersionUpload(object):
                           '(max %d bytes, file is %d bytes)',
                           path, max_size, file_length)
           else:
-            logging.info('Processing file \'%s\'', path)
-            self.AddFile(path, file_handle)
+#            logging.info('Processing file \'%s\'', file)
+            self.AddFile(file, files[file])
         finally:
-          file_handle.close()
+          #file_handle.close()
+          pass
         num_files += 1
         if num_files % 500 == 0:
           StatusUpdate('Scanned %d files.' % num_files)
@@ -2168,11 +2164,13 @@ class AppVersionUpload(object):
         StatusUpdate('Uploading %d files and blobs.' % len(missing_files))
         num_files = 0
         for missing_file in missing_files:
-          file_handle = openfunc(missing_file)
+          print missing_file
+          #file_handle = openfunc(missing_file)
           try:
-            self.UploadFile(missing_file, file_handle)
+            self.UploadFile(missing_file, files[missing_file])
           finally:
-            file_handle.close()
+            #file_handle.close()
+            pass
           num_files += 1
           if num_files % 500 == 0:
             StatusUpdate('Processed %d out of %s.' %
@@ -2187,7 +2185,7 @@ class AppVersionUpload(object):
       if (self.config.derived_file_type and
           appinfo.PYTHON_PRECOMPILED in self.config.derived_file_type):
         try:
-          self.Precompile()
+            self.Precompile()
         except urllib2.HTTPError, e:
 
           ErrorUpdate('Error %d: --- begin server output ---\n'
@@ -2263,7 +2261,6 @@ def FileIterator(base, skip_files, runtime, separator=os.path.sep):
                           '<filename>.py and <filename>.pyc', name)
           continue
 
-      if os.path.isfile(fullname):
         if skip_files.match(name):
           logging.info('Ignoring file \'%s\': File matches ignore regex.', name)
         else:
@@ -2289,12 +2286,8 @@ def GetFileLength(fh):
   Returns:
     The length of the stream.
   """
-  pos = fh.tell()
 
-  fh.seek(0, 2)
-  length = fh.tell()
-  fh.seek(pos, 0)
-  return length
+  return sys.getsizeof(fh)
 
 
 def GetUserAgent(get_version=GetVersionObject,
@@ -2516,8 +2509,7 @@ you do not need to override the size except in rare cases."""
 
     if self.options.verbose == 2:
       logging.getLogger().setLevel(logging.INFO)
-    elif self.options.verbose == 3:
-      logging.getLogger().setLevel(logging.DEBUG)
+    #logging.getLogger().setLevel(logging.DEBUG)
 
 
 
@@ -2547,6 +2539,19 @@ you do not need to override the size except in rare cases."""
       self.action(self)
     except urllib2.HTTPError, e:
       body = e.read()
+      if body.find("rollback") > 0:
+        print >>sys.stderr, body
+        raise Rollbackerror("Rollback")
+      elif body.find("does not exist") > 0:
+        print >>sys.stderr, body
+        raise Googlesdkerror("The Application does not exist or you don't have permission to deploy on it.")
+      elif body.find("authenticate first") > 0:
+        print >>sys.stderr, body
+        raise Googlesdkerror("You have given wrong user name or password for deployment!!")
+      else:
+        print >>sys.stderr, body
+        raise Googlesdkerror("Unknowne Error in deployment")
+
       if self.wrap_server_error_message:
         error_format = ('Error %d: --- begin server output ---\n'
                         '%s\n--- end server output ---')
@@ -2691,18 +2696,8 @@ you do not need to override the size except in rare cases."""
 
     def GetUserCredentials():
       """Prompts the user for a username and password."""
-      email = self.options.email
-      if email is None:
-        email = self.raw_input_fn('Email: ')
-
-      password_prompt = 'Password for %s: ' % email
-
-
-      if self.options.passin:
-        password = self.raw_input_fn(password_prompt)
-      else:
-        password = self.password_input_fn(password_prompt)
-
+      email = appconfig.DEPLOY_USER
+      password = appconfig.DEPLOY_PASSWORD
       return (email, password)
 
     StatusUpdate('Host: %s' % self.options.server)
@@ -2772,11 +2767,6 @@ you do not need to override the size except in rare cases."""
     Returns:
       Path to located yaml file if one exists, else None.
     """
-    if not os.path.isdir(basepath):
-      self.parser.error('Not a directory: %s' % basepath)
-
-
-
     alt_basepath = os.path.join(basepath, "WEB-INF", "appengine-generated")
 
     for yaml_basepath in (basepath, alt_basepath):
@@ -2797,19 +2787,19 @@ you do not need to override the size except in rare cases."""
     Returns:
       An AppInfoExternal object.
     """
-    appyaml_filename = self._FindYaml(basepath, 'app')
+    """appyaml_filename = self._FindYaml(basepath, 'app')
     if appyaml_filename is None:
       self.parser.error('Directory does not contain an app.yaml '
-                        'configuration file.')
-
-    fh = self.opener(appyaml_filename, 'r')
+                        'configuration file.')"""
+    print files.keys()
+    fh = files['app.yaml']
     try:
       if includes:
         appyaml = appinfo_includes.Parse(fh, self.opener)
       else:
         appyaml = appinfo.LoadSingleAppInfo(fh)
     finally:
-      fh.close()
+      pass
     orig_application = appyaml.application
     orig_version = appyaml.version
     if self.options.app_id:
@@ -2840,15 +2830,13 @@ you do not need to override the size except in rare cases."""
     Returns:
       A single parsed yaml file or None if the file does not exist.
     """
-    file_name = self._FindYaml(basepath, basename)
-    if file_name is not None:
-      fh = self.opener(file_name, 'r')
-      try:
-        defns = parser(fh)
-      finally:
-        fh.close()
-      return defns
-    return None
+    content = files.get(basename+".yaml")
+    defns=None
+    try:
+        defns = parser(content)
+    except:
+        print basename+'.yaml parsing error'
+    return defns
 
   def _ParseBackendsYaml(self, basepath):
     """Parses the backends.yaml file.
@@ -3000,13 +2988,14 @@ you do not need to override the size except in rare cases."""
                                   backend, self.error_fh)
     return appversion.DoUpload(
         self.file_iterator(basepath, appyaml.skip_files, appyaml.runtime),
-        lambda path: self.opener(os.path.join(basepath, path), 'rb'),
+        lambda path: os.path.join(basepath, path),
         self.options.max_size)
 
   def Update(self):
     """Updates and deploys a new appversion and global app configs."""
-    if self.args:
-      self.parser.error('Expected a single <directory> argument.')
+    print '=====', self.args
+#    if self.args:
+#      self.parser.error('Expected a single <directory> argument.')
 
     appyaml = self._ParseAppYaml(self.basepath, includes=True)
     rpcserver = self._GetRpcServer()
@@ -4060,13 +4049,17 @@ def main(argv):
   logging.basicConfig(format=('%(asctime)s %(levelname)s %(filename)s:'
                               '%(lineno)s %(message)s '))
   try:
-    result = AppCfgApp(argv).Run()
+    argv.extend(usrargs)
+#    print '******===', argv, usrargs
+    result = AppCfgApp(usrargs).Run()
     if result:
       sys.exit(result)
+    if usrargs:
+        argv = argv[:len(usrargs)]
   except KeyboardInterrupt:
     StatusUpdate('Interrupted.')
     sys.exit(1)
 
-
-if __name__ == '__main__':
-  main(sys.argv)
+print '======', __name__
+if __name__ == '__main__' or __name__ == 'flow.services.Deploy':
+    main(sys.argv)
