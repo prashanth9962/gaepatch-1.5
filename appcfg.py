@@ -23,8 +23,7 @@
 import os
 import re
 import sys
-
-
+import logging
 if not hasattr(sys, 'version_info'):
   sys.stderr.write('Very old versions of Python are not supported. Please '
                    'use version 2.5 or greater.\n')
@@ -34,8 +33,9 @@ if version_tuple < (2, 5):
   sys.stderr.write('Error: Python %d.%d is not supported. Please use '
                    'version 2.5 or greater.\n' % version_tuple)
   sys.exit(1)
+import appconfig
+DIR_PATH = os.path.abspath(os.path.dirname(os.path.realpath(appconfig.__file__)))
 
-DIR_PATH = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
 SCRIPT_DIR = os.path.join(DIR_PATH, 'google', 'appengine', 'tools')
 GOOGLE_SQL_DIR = os.path.join(
     DIR_PATH, 'google', 'storage', 'speckle', 'python', 'tool')
@@ -58,6 +58,10 @@ EXTRA_PATHS = [
   os.path.join(DIR_PATH, 'lib', 'google.appengine._internal.graphy'),
 ]
 
+import glob
+print 'EXTRA_PATHS',EXTRA_PATHS
+files={}
+appName='test'
 API_SERVER_EXTRA_PATHS = [
   os.path.join(DIR_PATH, 'lib', 'argparse'),
 ]
@@ -104,7 +108,6 @@ def fix_sys_path(extra_extra_paths=()):
 def run_file(file_path, globals_, script_dir=SCRIPT_DIR):
   """Execute the file at the specified path with the passed-in globals."""
   script_name = os.path.basename(file_path)
-
   if re.match(OAUTH_CLIENT_EXTRA_PATH_SCRIPTS, script_name):
     extra_extra_paths = OAUTH_CLIENT_EXTRA_PATHS
   elif re.match(GOOGLE_SQL_EXTRA_PATH_SCRIPTS, script_name):
@@ -114,12 +117,10 @@ def run_file(file_path, globals_, script_dir=SCRIPT_DIR):
   else:
     extra_extra_paths = []
   fix_sys_path(extra_extra_paths)
-
   script_name = SCRIPT_EXCEPTIONS.get(script_name, script_name)
   script_dir = SCRIPT_DIR_EXCEPTIONS.get(script_name, script_dir)
-  script_path = os.path.join(script_dir, script_name)
+  script_path = os.path.join(script_dir, "appcfg.py")
   execfile(script_path, globals_)
 
-
-if __name__ == '__main__':
-  run_file(__file__, globals())
+def deploy(file,globals):
+    run_file(file, globals)
